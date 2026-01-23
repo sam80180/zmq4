@@ -23,10 +23,10 @@ type Security interface {
 	Handshake(conn *Conn, server bool) error
 
 	// Encrypt writes the encrypted form of data to w.
-	Encrypt(w io.Writer, data []byte) (int, error)
+	Encrypt(w io.Writer, data []byte, more bool) (int, error)
 
 	// Decrypt writes the decrypted form of data to w.
-	Decrypt(w io.Writer, data []byte) (int, error)
+	Decrypt(w io.Writer, data []byte, more *bool) (int, error)
 }
 
 // SecurityType denotes types of ZMTP security mechanisms
@@ -91,12 +91,12 @@ func (nullSecurity) Handshake(conn *Conn, server bool) error {
 }
 
 // Encrypt writes the encrypted form of data to w.
-func (nullSecurity) Encrypt(w io.Writer, data []byte) (int, error) {
+func (nullSecurity) Encrypt(w io.Writer, data []byte, _ bool) (int, error) {
 	return w.Write(data)
 }
 
 // Decrypt writes the decrypted form of data to w.
-func (nullSecurity) Decrypt(w io.Writer, data []byte) (int, error) {
+func (nullSecurity) Decrypt(w io.Writer, data []byte, _ *bool) (int, error) {
 	return w.Write(data)
 }
 

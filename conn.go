@@ -169,7 +169,7 @@ func (c *Conn) SendCmd(name string, body []byte) error {
 	if err != nil {
 		return err
 	}
-	return c.send(true, buf, 0)
+	return c.send(true, buf, 0, false)
 }
 
 // SendMsg sends a ZMTP message over the wire.
@@ -184,10 +184,16 @@ func (c *Conn) SendMsg(msg Msg) error {
 	nframes := len(msg.Frames)
 	for i, frame := range msg.Frames {
 		var flag byte
-		if i < nframes-1 {
-			flag ^= hasMoreBitFlag
-		}
-		err := c.send(false, frame, flag)
+		hasMore := (i < nframes-1)
+		switch c.sec.Type() {
+		case NullSecurity, PlainSecurity:
+			if hasMore {
+				flag ^= hasMoreBitFlag
+			}
+		case CurveSecurity:
+
+		} // end switch
+		err := c.send(false, frame, flag, hasMore)
 		if err != nil {
 			return fmt.Errorf("zmq4: error sending frame %d/%d: %w", i+1, nframes, err)
 		}
@@ -286,38 +292,45 @@ func (c *Conn) sendMulti(msg Msg) error {
 	nframes := len(msg.Frames)
 	for i, frame := range msg.Frames {
 		var flag byte
-		if i < nframes-1 {
-			flag ^= hasMoreBitFlag
-		}
+		hasMore := (i < nframes-1)
 
-		size := len(frame)
+		// header bytes
+		hdr := make([]byte, 9)
+		var hsz, size int
+		switch c.sec.Type() {
+		case NullSecurity, PlainSecurity:
+			if hasMore {
+				flag ^= hasMoreBitFlag
+			} // end if
+			size = len(frame)
+		case CurveSecurity:
+			size = len(frame) + 33
+		} // end switch
 		isLong := size > 255
 		if isLong {
 			flag ^= isLongBitFlag
-		}
-
-		var (
-			hdr = [8 + 1]byte{flag}
-			hsz int
-		)
+		} // end if
+		hdr[0] = flag
 		if isLong {
 			hsz = 9
 			binary.BigEndian.PutUint64(hdr[1:], uint64(size))
 		} else {
 			hsz = 2
 			hdr[1] = uint8(size)
-		}
+		} // end if
+		buffers = append(buffers, hdr[:hsz])
 
+		// frame data
 		switch c.sec.Type() {
-		case NullSecurity:
-			buffers = append(buffers, hdr[:hsz], frame)
-		default:
+		case NullSecurity, PlainSecurity:
+			buffers = append(buffers, frame)
+		case CurveSecurity:
 			var secBuf bytes.Buffer
-			if _, err := c.sec.Encrypt(&secBuf, frame); err != nil {
+			if _, err := c.sec.Encrypt(&secBuf, frame, hasMore); err != nil {
 				return err
-			}
-			buffers = append(buffers, hdr[:hsz], secBuf.Bytes())
-		}
+			} // end if
+			buffers = append(buffers, secBuf.Bytes())
+		} // end switch
 	}
 
 	if _, err := buffers.WriteTo(c.rw); err != nil {
@@ -328,9 +341,15 @@ func (c *Conn) sendMulti(msg Msg) error {
 	return nil
 }
 
-func (c *Conn) send(isCommand bool, body []byte, flag byte) error {
+func (c *Conn) send(isCommand bool, body []byte, flag byte, more bool) error {
 	// Long flag
 	size := len(body)
+	switch c.sec.Type() {
+	case NullSecurity, PlainSecurity:
+
+	case CurveSecurity:
+		size += 33
+	} // end switch
 	isLong := size > 255
 	if isLong {
 		flag ^= isLongBitFlag
@@ -358,7 +377,7 @@ func (c *Conn) send(isCommand bool, body []byte, flag byte) error {
 		return err
 	}
 
-	if _, err := c.sec.Encrypt(c.rw, body); err != nil {
+	if _, err := c.sec.Encrypt(c.rw, body, more); err != nil {
 		c.checkIO(err)
 		return err
 	}
@@ -422,13 +441,13 @@ func (c *Conn) read() Msg {
 
 		// fast path for NULL security: we bypass the bytes.Buffer allocation.
 		switch c.sec.Type() {
-		case NullSecurity: // FIXME(sbinet): also do that for non-encrypted PLAIN?
+		case NullSecurity, PlainSecurity:
 			msg.Frames = append(msg.Frames, body)
 			continue
 		}
 
 		buf := new(bytes.Buffer)
-		if _, msg.err = c.sec.Decrypt(buf, body); msg.err != nil {
+		if _, msg.err = c.sec.Decrypt(buf, body, &hasMore); msg.err != nil {
 			return msg
 		}
 		msg.Frames = append(msg.Frames, buf.Bytes())

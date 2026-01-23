@@ -32,7 +32,7 @@ func TestSecurity(t *testing.T) {
 
 	data := []byte("hello world")
 	wenc := new(bytes.Buffer)
-	if _, err := sec.Encrypt(wenc, data); err != nil {
+	if _, err := sec.Encrypt(wenc, data, false); err != nil {
 		t.Fatalf("error encrypting data: %+v", err)
 	}
 
@@ -41,7 +41,7 @@ func TestSecurity(t *testing.T) {
 	}
 
 	wdec := new(bytes.Buffer)
-	if _, err := sec.Decrypt(wdec, wenc.Bytes()); err != nil {
+	if _, err := sec.Decrypt(wdec, wenc.Bytes(), nil); err != nil {
 		t.Fatalf("error decrypting data: %+v", err)
 	}
 

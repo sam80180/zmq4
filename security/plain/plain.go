@@ -134,12 +134,12 @@ func (sec *security) Handshake(conn *zmq4.Conn, server bool) error {
 }
 
 // Encrypt writes the encrypted form of data to w.
-func (security) Encrypt(w io.Writer, data []byte) (int, error) {
+func (security) Encrypt(w io.Writer, data []byte, _ bool) (int, error) {
 	return w.Write(data)
 }
 
 // Decrypt writes the decrypted form of data to w.
-func (security) Decrypt(w io.Writer, data []byte) (int, error) {
+func (security) Decrypt(w io.Writer, data []byte, _ *bool) (int, error) {
 	return w.Write(data)
 }
 
