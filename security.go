@@ -23,10 +23,12 @@ type Security interface {
 	Handshake(conn *Conn, server bool) error
 
 	// Encrypt writes the encrypted form of data to w.
-	Encrypt(w io.Writer, data []byte, more bool) (int, error)
+	Encrypt(conn *Conn, w io.Writer, data []byte, more bool) (int, error)
 
 	// Decrypt writes the decrypted form of data to w.
-	Decrypt(w io.Writer, data []byte, more *bool) (int, error)
+	Decrypt(conn *Conn, w io.Writer, data []byte, more *bool) (int, error)
+
+	IsPlain() bool
 }
 
 // SecurityType denotes types of ZMTP security mechanisms
@@ -45,6 +47,8 @@ const (
 	// CurveSecurity uses ZMQ_CURVE for authentication
 	// and encryption.
 	CurveSecurity SecurityType = "CURVE"
+
+	GssapiSecurity SecurityType = "GSSAPI"
 )
 
 // security implements the NULL security mechanism.
@@ -91,14 +95,18 @@ func (nullSecurity) Handshake(conn *Conn, server bool) error {
 }
 
 // Encrypt writes the encrypted form of data to w.
-func (nullSecurity) Encrypt(w io.Writer, data []byte, _ bool) (int, error) {
+func (nullSecurity) Encrypt(_ *Conn, w io.Writer, data []byte, _ bool) (int, error) {
 	return w.Write(data)
 }
 
 // Decrypt writes the decrypted form of data to w.
-func (nullSecurity) Decrypt(w io.Writer, data []byte, _ *bool) (int, error) {
+func (nullSecurity) Decrypt(_ *Conn, w io.Writer, data []byte, _ *bool) (int, error) {
 	return w.Write(data)
 }
+
+func (nullSecurity) IsPlain() bool {
+	return true
+} // end IsPlain()
 
 var (
 	_ Security = (*nullSecurity)(nil)

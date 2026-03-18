@@ -134,12 +134,12 @@ func (sec *security) Handshake(conn *zmq4.Conn, server bool) error {
 }
 
 // Encrypt writes the encrypted form of data to w.
-func (security) Encrypt(w io.Writer, data []byte, _ bool) (int, error) {
+func (security) Encrypt(_ *zmq4.Conn, w io.Writer, data []byte, _ bool) (int, error) {
 	return w.Write(data)
 }
 
 // Decrypt writes the decrypted form of data to w.
-func (security) Decrypt(w io.Writer, data []byte, _ *bool) (int, error) {
+func (security) Decrypt(_ *zmq4.Conn, w io.Writer, data []byte, _ *bool) (int, error) {
 	return w.Write(data)
 }
 
@@ -154,6 +154,10 @@ func validateHello(body []byte) error {
 	//	log.Printf("user=%q, pass=%q, body=%q", user, pass, body)
 	return nil
 }
+
+func (security) IsPlain() bool {
+	return true
+} // end IsPlain()
 
 var (
 	_ zmq4.Security = (*security)(nil)

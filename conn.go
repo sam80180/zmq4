@@ -185,14 +185,9 @@ func (c *Conn) SendMsg(msg Msg) error {
 	for i, frame := range msg.Frames {
 		var flag byte
 		hasMore := (i < nframes-1)
-		switch c.sec.Type() {
-		case NullSecurity, PlainSecurity:
-			if hasMore {
-				flag ^= hasMoreBitFlag
-			}
-		case CurveSecurity:
-
-		} // end switch
+		if hasMore {
+			flag |= hasMoreBitFlag
+		} // end if
 		err := c.send(false, frame, flag, hasMore)
 		if err != nil {
 			return fmt.Errorf("zmq4: error sending frame %d/%d: %w", i+1, nframes, err)
@@ -293,22 +288,29 @@ func (c *Conn) sendMulti(msg Msg) error {
 	for i, frame := range msg.Frames {
 		var flag byte
 		hasMore := (i < nframes-1)
+		var size int
+
+		// encrypt frame if necessary
+		b := frame
+		if c.sec.IsPlain() {
+			if hasMore {
+				flag |= hasMoreBitFlag
+			} // end if
+		} else {
+			var secBuf bytes.Buffer
+			if _, err := c.sec.Encrypt(c, &secBuf, frame, hasMore); err != nil {
+				return err
+			} // end if
+			b = secBuf.Bytes()
+		} // end if
 
 		// header bytes
+		size = len(b)
 		hdr := make([]byte, 9)
-		var hsz, size int
-		switch c.sec.Type() {
-		case NullSecurity, PlainSecurity:
-			if hasMore {
-				flag ^= hasMoreBitFlag
-			} // end if
-			size = len(frame)
-		case CurveSecurity:
-			size = len(frame) + 33
-		} // end switch
-		isLong := size > 255
+		var hsz int
+		isLong := (size > 255)
 		if isLong {
-			flag ^= isLongBitFlag
+			flag |= isLongBitFlag
 		} // end if
 		hdr[0] = flag
 		if isLong {
@@ -318,19 +320,8 @@ func (c *Conn) sendMulti(msg Msg) error {
 			hsz = 2
 			hdr[1] = uint8(size)
 		} // end if
-		buffers = append(buffers, hdr[:hsz])
 
-		// frame data
-		switch c.sec.Type() {
-		case NullSecurity, PlainSecurity:
-			buffers = append(buffers, frame)
-		case CurveSecurity:
-			var secBuf bytes.Buffer
-			if _, err := c.sec.Encrypt(&secBuf, frame, hasMore); err != nil {
-				return err
-			} // end if
-			buffers = append(buffers, secBuf.Bytes())
-		} // end switch
+		buffers = append(buffers, hdr[:hsz], b)
 	}
 
 	if _, err := buffers.WriteTo(c.rw); err != nil {
@@ -342,21 +333,24 @@ func (c *Conn) sendMulti(msg Msg) error {
 }
 
 func (c *Conn) send(isCommand bool, body []byte, flag byte, more bool) error {
-	// Long flag
-	size := len(body)
-	switch c.sec.Type() {
-	case NullSecurity, PlainSecurity:
+	b := body
+	if !c.sec.IsPlain() { // encrypt if necessary
+		var secBuf bytes.Buffer
+		if _, err := c.sec.Encrypt(c, &secBuf, body, more); err != nil {
+			return err
+		} // end if
+		b = secBuf.Bytes()
+	} // end if
 
-	case CurveSecurity:
-		size += 33
-	} // end switch
-	isLong := size > 255
+	// Long flag
+	size := len(b)
+	isLong := (size > 255)
 	if isLong {
-		flag ^= isLongBitFlag
-	}
+		flag |= isLongBitFlag
+	} // end if
 
 	if isCommand {
-		flag ^= isCommandBitFlag
+		flag |= isCommandBitFlag
 	}
 
 	var (
@@ -376,11 +370,10 @@ func (c *Conn) send(isCommand bool, body []byte, flag byte, more bool) error {
 		c.checkIO(err)
 		return err
 	}
-
-	if _, err := c.sec.Encrypt(c.rw, body, more); err != nil {
+	if _, err := c.rw.Write(b); err != nil {
 		c.checkIO(err)
 		return err
-	}
+	} // end if
 
 	return nil
 }
@@ -408,7 +401,7 @@ func (c *Conn) read() Msg {
 		fl := flag(header[0])
 
 		hasMore = fl.hasMore()
-		isCmd = isCmd || fl.isCommand()
+		isCmd = fl.isCommand()
 
 		// Determine the actual length of the body
 		size := uint64(header[1])
@@ -440,17 +433,15 @@ func (c *Conn) read() Msg {
 		}
 
 		// fast path for NULL security: we bypass the bytes.Buffer allocation.
-		switch c.sec.Type() {
-		case NullSecurity, PlainSecurity:
+		if c.sec.IsPlain() {
 			msg.Frames = append(msg.Frames, body)
-			continue
-		}
-
-		buf := new(bytes.Buffer)
-		if _, msg.err = c.sec.Decrypt(buf, body, &hasMore); msg.err != nil {
-			return msg
-		}
-		msg.Frames = append(msg.Frames, buf.Bytes())
+		} else {
+			buf := new(bytes.Buffer)
+			if _, msg.err = c.sec.Decrypt(c, buf, body, &hasMore); msg.err != nil {
+				return msg
+			} // end if
+			msg.Frames = append(msg.Frames, buf.Bytes())
+		} // end if
 	}
 	if isCmd {
 		msg.Type = CmdMsg
